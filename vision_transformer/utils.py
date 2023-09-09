@@ -175,7 +175,7 @@ def read_pickle(file_name: str) -> list:
         return info_list
 
 
-'''def train_one_epoch(model, optimizer, data_loader, device, epoch):
+def train_one_epoch(model, optimizer, data_loader, device, epoch):
     model.train()
     loss_function = torch.nn.CrossEntropyLoss()
     accu_loss = torch.zeros(1).to(device)  # 累计损失
@@ -186,8 +186,10 @@ def read_pickle(file_name: str) -> list:
     data_loader = tqdm(data_loader, file=sys.stdout)
     for step, data in enumerate(data_loader):
         images, labels = data
-        print(labels.shape)
-        print(images.shape)
+        #print(labels.shape)
+        #print(images.shape)
+        images=torch.squeeze(images,dim=0)
+        labels=torch.squeeze(labels,dim=0)
         images = images.to(device)
         labels=labels.to(device)
         sample_num += images.shape[0]
@@ -198,8 +200,8 @@ def read_pickle(file_name: str) -> list:
 
         loss = loss_function(pred, labels.to(device))
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=10, norm_type=2)
         accu_loss += loss.detach()
-
         data_loader.desc = "[train epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
                                                                                accu_loss.item() / (step + 1),
                                                                                accu_num.item() / sample_num)
@@ -211,7 +213,7 @@ def read_pickle(file_name: str) -> list:
         optimizer.step()
         optimizer.zero_grad()
 
-    return accu_loss.item() / (step + 1), accu_num.item() / sample_num'''
+    return accu_loss.item() / (step + 1), accu_num.item() / sample_num
 class LabelSmoothingCrossEntropy(torch.nn.Module):
     """ NLL loss with label smoothing.
     """
@@ -229,7 +231,7 @@ class LabelSmoothingCrossEntropy(torch.nn.Module):
         loss = self.confidence * nll_loss + self.smoothing * smooth_loss
         return loss.mean()
     
-def train_one_epoch(model, optimizer, data, device, epoch, round):
+'''def train_one_epoch(model, optimizer, data, device, epoch, round):
     model.train()
     loss_function = torch.nn.CrossEntropyLoss()
     #loss_function=LabelSmoothingCrossEntropy()
@@ -268,9 +270,9 @@ def train_one_epoch(model, optimizer, data, device, epoch, round):
         optimizer.step()
         optimizer.zero_grad()
 
-    return accu_loss.item() / (step + 1), accu_num.item() / sample_num
+    return accu_loss.item() / (step + 1), accu_num.item() / sample_num'''
 
-'''@torch.no_grad()
+@torch.no_grad()
 def evaluate(model, data_loader, device, epoch):
     loss_function = torch.nn.CrossEntropyLoss()
 
@@ -281,26 +283,28 @@ def evaluate(model, data_loader, device, epoch):
 
     sample_num = 0
     data_loader = tqdm(data_loader, file=sys.stdout)
-    for step, data in enumerate(data_loader):
-        images = data["image"]
-        labels=data["label"]
-        sample_num += images.shape[0]
+    with torch.no_grad():
+        for step, data in enumerate(data_loader):
+            images,labels = data
+            images=torch.squeeze(images,dim=0)
+            labels=torch.squeeze(labels,dim=0)
+            sample_num += images.shape[0]
 
-        pred = model(images.to(device))
-        pred_classes = torch.max(pred, dim=1)[1]
-        accu_num += torch.eq(pred_classes, labels.to(device)).sum()
+            pred = model(images.to(device))
+            pred_classes = torch.max(pred, dim=1)[1]
+            accu_num += torch.eq(pred_classes, labels.to(device)).sum()
 
-        loss = loss_function(pred, labels.to(device))
-        accu_loss += loss
-        round.desc="[train epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
-                                                                               accu_loss.item() / (step + 1),
-                                                                               accu_num.item() / sample_num)
-        data_loader.desc = "[valid epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
-                                                                               accu_loss.item() / (step + 1),
-                                                                               accu_num.item() / sample_num)
+            loss = loss_function(pred, labels.to(device))
+            accu_loss += loss
+            '''data_loader.desc="[train epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
+                                                                                accu_loss.item() / (step + 1),
+                                                                                accu_num.item() / sample_num)'''
+            data_loader.desc = "[valid epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
+                                                                                accu_loss.item() / (step + 1),
+                                                                                accu_num.item() / sample_num)
 
-    return accu_loss.item() / (step + 1), accu_num.item() / sample_num'''
-@torch.no_grad()
+    return accu_loss.item() / (step + 1), accu_num.item() / sample_num
+'''@torch.no_grad()
 def evaluate(model, data, device, epoch, round):
     loss_function = torch.nn.CrossEntropyLoss()
 
@@ -312,54 +316,56 @@ def evaluate(model, data, device, epoch, round):
     sample_num = 0
     round = tqdm(range(round), file=sys.stdout)
     #data_loader = tqdm(data_loader, file=sys.stdout)
-    for step,d in enumerate(round):
-        #print("This is round",step)
-        images, labels = data[step]
-        images = images.to(device)
-        labels=labels.to(device)
-        sample_num += images.shape[0]
+    with torch.no_grad():
+        for step,d in enumerate(round):
+            #print("This is round",step)
+            images, labels = data[step]
+            images = images.to(device)
+            labels=labels.to(device)
+            sample_num += images.shape[0]
 
-        pred = model(images.to(device))
-        pred_classes = torch.max(pred, dim=1)[1]
-        accu_num += torch.eq(pred_classes, labels.to(device)).sum()
+            pred = model(images.to(device))
+            pred_classes = torch.max(pred, dim=1)[1]
+            accu_num += torch.eq(pred_classes, labels.to(device)).sum()
 
-        loss = loss_function(pred, labels.to(device))
-        accu_loss += loss
-        round.desc="[valid epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
-                                                                               accu_loss.item() / (step + 1),
-                                                                               accu_num.item() / sample_num)
-        '''data_loader.desc = "[valid epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
-                                                                               accu_loss.item() / (step + 1),
-                                                                               accu_num.item() / sample_num)'''
+            loss = loss_function(pred, labels.to(device))
+            accu_loss += loss
+            round.desc="[valid epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
+                                                                                accu_loss.item() / (step + 1),
+                                                                                accu_num.item() / sample_num)
 
-    return accu_loss.item() / (step + 1), accu_num.item() / sample_num
+    return accu_loss.item() / (step + 1), accu_num.item() / sample_num'''
 
-'''def test(model, data_loader, device, epoch):
-    #loss_function = torch.nn.CrossEntropyLoss()
+def test(model, data_loader, device, epoch):
+    loss_function = torch.nn.CrossEntropyLoss()
 
-    #model.eval()
+    model.eval()
 
     accu_num = torch.zeros(1).to(device)   # 累计预测正确的样本数
-    #accu_loss = torch.zeros(1).to(device)  # 累计损失
+    accu_loss = torch.zeros(1).to(device)  # 累计损失
 
     sample_num = 0
     data_loader = tqdm(data_loader, file=sys.stdout)
-    for step, data in enumerate(data_loader):
-        images = data["image"]
-        labels=data["label"]
-        sample_num += images.shape[0]
+    with torch.no_grad():
+        for step, data in enumerate(data_loader):
+            images,labels = data
+            images=torch.squeeze(images,dim=0)
+            labels=torch.squeeze(labels,dim=0)
+            sample_num += images.shape[0]
 
-        pred = model(images.to(device))
-        pred_classes = torch.max(pred, dim=1)[1]
-        accu_num += torch.eq(pred_classes, labels.to(device)).sum()
+            pred = model(images.to(device))
+            pred_classes = torch.max(pred, dim=1)[1]
+            accu_num += torch.eq(pred_classes, labels.to(device)).sum()
 
-        #loss = loss_function(pred, labels.to(device))
-        #accu_loss += loss
+            loss = loss_function(pred, labels.to(device))
+            accu_loss += loss
 
-        data_loader.desc = "[test epoch {}] acc: {:.3f}".format(epoch,accu_num.item() / sample_num)
-    return accu_num.item() / sample_num'''
+            data_loader.desc = "[test see better epoch {}] loss: {:.3f}, acc: {:.3f}".format(epoch,
+                                                                                    accu_loss.item() / (step + 1),
+                                                                                    accu_num.item() / sample_num)
+    return accu_num.item() / sample_num
 
-def test(model, data, device, epoch, round):
+'''def test(model, data, device, epoch, round):
     #loss_function = torch.nn.CrossEntropyLoss()
 
     model.eval()
@@ -370,21 +376,22 @@ def test(model, data, device, epoch, round):
     sample_num = 0
     round = tqdm(range(round), file=sys.stdout)
     #data_loader = tqdm(data_loader, file=sys.stdout)
-    for step,d in enumerate(round):
-        images, labels = data[step]
-        images = images.to(device)
-        labels=labels.to(device)
-        sample_num += images.shape[0]
+    with torch.no_grad():
+        for step,d in enumerate(round):
+            images, labels = data[step]
+            images = images.to(device)
+            labels=labels.to(device)
+            sample_num += images.shape[0]
 
-        pred = model(images.to(device))
-        pred_classes = torch.max(pred, dim=1)[1]
-        accu_num += torch.eq(pred_classes, labels.to(device)).sum()
+            pred = model(images.to(device))
+            pred_classes = torch.max(pred, dim=1)[1]
+            accu_num += torch.eq(pred_classes, labels.to(device)).sum()
 
-        #loss = loss_function(pred, labels.to(device))
-        #accu_loss += loss
-        round.desc="[test epoch {}] acc: {:.3f}".format(epoch,accu_num.item() / sample_num)
-        #data_loader.desc = "[test epoch {}] acc: {:.3f}".format(epoch,accu_num.item() / sample_num)
-    return accu_num.item() / sample_num
+            #loss = loss_function(pred, labels.to(device))
+            #accu_loss += loss
+            round.desc="[test epoch {}] acc: {:.3f}".format(epoch,accu_num.item() / sample_num)
+            #data_loader.desc = "[test epoch {}] acc: {:.3f}".format(epoch,accu_num.item() / sample_num)
+    return accu_num.item() / sample_num'''
 
 def test_model(model, data, device, epoch, round):
     #loss_function = torch.nn.CrossEntropyLoss()
