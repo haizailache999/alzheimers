@@ -67,7 +67,7 @@ class PatchEmbed(nn.Module):
     """
     2D Image to Patch Embedding
     """
-    def __init__(self, img_size=224, patch_size=16, in_c=3, embed_dim=768, norm_layer=None):
+    def __init__(self, img_size=224, patch_size=32, in_c=3, embed_dim=1024, norm_layer=None):
         super().__init__()
         img_size = (img_size, img_size)
         patch_size = (patch_size, patch_size)
@@ -86,7 +86,9 @@ class PatchEmbed(nn.Module):
 
         # flatten: [B, C, H, W] -> [B, C, HW]
         # transpose: [B, C, HW] -> [B, HW, C]
-        x = self.proj(x).flatten(2).transpose(1, 2)
+        x=self.proj(x)
+        #print("x shape",x.shape)
+        x = x.flatten(2).transpose(1, 2)
         x = self.norm(x)
         return x
 
@@ -185,12 +187,12 @@ class Block(nn.Module):
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_c=1, num_classes=2,
-                 embed_dim=256, depth_shared=2, depth_dimension_specific=2,depth_slice_attention=1,
-                 depth_dimension_attention=1,num_heads=4, mlp_ratio=4.0, qkv_bias=True,
+    def __init__(self, img_size=224, patch_size=32, in_c=1, num_classes=2,
+                 embed_dim=256, depth_shared=3, depth_dimension_specific=3,depth_slice_attention=3,
+                 depth_dimension_attention=3,num_heads=4, mlp_ratio=4.0, qkv_bias=True,
                  qk_scale=None, representation_size=None, distilled=False, drop_ratio=0.,
                  attn_drop_ratio=0., drop_path_ratio=0.5, embed_layer=hMLP_stem, norm_layer=None,
-                 act_layer=None,slices_num=7,dimension_num=3):
+                 act_layer=None,slices_num=20,dimension_num=3):
         """
         Args:
             img_size (int, tuple): input image size
@@ -226,6 +228,7 @@ class VisionTransformer(nn.Module):
         #self.patch_embed = embed_layer(img_size=img_size, patch_size=patch_size, in_c=in_c*self.slices_num*self.dimension, embed_dim=embed_dim)
         self.patch_embed = embed_layer(img_size=(img_size,img_size), patch_size=(patch_size,patch_size), in_chans=in_c*self.slices_num*self.dimension, embed_dim=embed_dim)
         num_patches = self.patch_embed.num_patches
+        #print(num_patches)
 
         self.cls_token_shared = nn.Parameter(torch.zeros(1, 1, embed_dim))
         #self.cls_token_shared=nn.Parameter(torch.zeros(1, 3*slices_num, embed_dim))
@@ -327,7 +330,8 @@ class VisionTransformer(nn.Module):
             x = torch.cat((cls_token, x), dim=1)  # [B, 197, 768]
         else:
             x = torch.cat((cls_token, self.dist_token.expand(x.shape[0], -1, -1), x), dim=1)
-
+        #print(x.shape)
+        #print("pos",self.pos_embed.shape)
         x = self.pos_drop(x + self.pos_embed)
         #x = self.blocks_shared(x)
         x_total_token=torch.empty(x.shape[0], 0, x.shape[2]).to(device)
@@ -374,7 +378,7 @@ class VisionTransformer(nn.Module):
                 x_pic_dimension=torch.empty(x.shape[0], 0, x.shape[2]).to(device)
                 for slice in range(self.slices_num):
                     x_new_d=torch.cat((x_d[:,slice:slice+1,:],x_d[:,self.slices_num:,:]),dim=1).to(device)
-                    x_new_d=self.blocks_slice_attention_1(x_new_d).to(device)
+                    x_new_d=self.blocks_slice_attention_2(x_new_d).to(device)
                     x_token_dimension=torch.cat((x_token_dimension,x_new_d[:,0:1,:]),dim=1)
                     x_pic_dimension=torch.cat((x_pic_dimension,x_new_d[:,1:,:]),dim=1)
                 x_d=torch.cat((x_token_dimension,x_pic_dimension),dim=1).to(device)
@@ -384,7 +388,7 @@ class VisionTransformer(nn.Module):
                 x_pic_dimension=torch.empty(x.shape[0], 0, x.shape[2]).to(device)
                 for slice in range(self.slices_num):
                     x_new_d=torch.cat((x_d[:,slice:slice+1,:],x_d[:,self.slices_num:,:]),dim=1).to(device)
-                    x_new_d=self.blocks_slice_attention_1(x_new_d).to(device)
+                    x_new_d=self.blocks_slice_attention_3(x_new_d).to(device)
                     x_token_dimension=torch.cat((x_token_dimension,x_new_d[:,0:1,:]),dim=1)
                     x_pic_dimension=torch.cat((x_pic_dimension,x_new_d[:,1:,:]),dim=1)
                 x_d=torch.cat((x_token_dimension,x_pic_dimension),dim=1).to(device)
@@ -485,7 +489,7 @@ def vit_base_patch16_224(num_classes: int = 1000):
 
 def own_model(num_classes:int=2,has_logits: bool = True):
     model = VisionTransformer(
-                              num_classes=num_classes)
+                              num_classes=num_classes,patch_size=16)
     return model
 
 def vit_base_patch16_224_in21k(num_classes: int = 21843, has_logits: bool = True):
