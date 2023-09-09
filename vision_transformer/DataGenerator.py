@@ -4,13 +4,14 @@ __author__ = 'Haohan Wang'
 #from PIL import Image
 import torch
 from torch.utils.data import Dataset
+import torchio as tio
 #import pandas as pd
 import numpy as np
 from os.path import join
 from copy import copy
-
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
-
+import math
 import torch
 from os.path import join
 
@@ -31,7 +32,7 @@ class MRIDataGenerator(Dataset):
                  n_classes=2,
                  augmented=True,
                  augmented_fancy=False,
-                 MCI_included=False,
+                 MCI_included=True,
                  MCI_included_as_soft_label=False,
                  returnSubjectID=False,
                  dropBlock = False,
@@ -67,12 +68,36 @@ class MRIDataGenerator(Dataset):
 
     def __len__(self):
         self.on_epoch_end()
-        return self.totalLength
+        return math.ceil(self.totalLength/self.batch_size)
 
     def combine(self,image,batchSize):
         imaging=image.squeeze(dim=4)
+        #transform = tio.CropOrPad((224, 224, 224))
+        #imaging=transform(imaging)
         #image_shape=img.shape
-        total_result=torch.empty(0,21,224,224)
+        if self.split == 'train':
+            flip = tio.RandomFlip(axes=('LR',),flip_probability= 0.5)  # flip along lateral axis only
+            rescale = tio.RescaleIntensity(out_min_max=(0, 1))
+            spatial = tio.OneOf({
+                    tio.RandomAffine(): 0.8,
+                    tio.RandomElasticDeformation(): 0.2,
+                },
+                p=0.3,
+            )
+            intensity=tio.OneOf({
+                    #tio.transforms.RandomMotion(): 0.3,
+                    tio.transforms.RandomBiasField(): 0.5,
+                    tio.RandomGamma(log_gamma=(-0.3, 0.3)):0.5,
+                },
+                p=0.3,
+            )
+            #motion=tio.transforms.RandomMotion()
+            #bias=tio.transforms.RandomBiasField()
+            #gamma=tio.RandomGamma(log_gamma=(-0.3, 0.3))
+            transforms = [flip,rescale, spatial,intensity]
+            transform = tio.Compose(transforms)
+            imaging=transform(imaging)
+        total_result=torch.empty(0,60,224,224)
         for batch in range(batchSize):
             img=imaging[batch]
             initial_shape=img.shape
@@ -82,22 +107,28 @@ class MRIDataGenerator(Dataset):
             image_shape=img.shape
             result=torch.empty( 0, 224,224)
             for dimension in range(3):
-                for i in range(7):
+                for i in range(20):
                     if dimension==0:
-                        slice=img[i*image_shape[0]//7+0:i*image_shape[0]//7+1+0,:,:]
+                        #slice=img[i*image_shape[0]//7+0:i*image_shape[0]//7+1+0,:,:]   #initial
+                        slice=img[i*(image_shape[0]-104)//20+52:i*(image_shape[0]-104)//20+52+1,:,:]
                         #slice=slice.resize_(1,224,224)
                     elif dimension==1:
-                        slice=img[:,i*image_shape[1]//7+0:i*image_shape[1]//7+1+0,:]
+                        #slice=img[:,i*image_shape[1]//7+0:i*image_shape[1]//7+1+0,:]   #initial
+                        slice=img[:,i*(image_shape[1]-104)//20+52:i*(image_shape[1]-104)//20+52+1,:]
                         #print(slice.shape)
                         slice=slice.permute(1,0,2)
                         #slice=slice.resize_(1,224,224)
                     else:
-                        slice=img[:,:,i*image_shape[2]//7+0:i*image_shape[2]//7+1+0]
+                        #slice=img[:,:,i*image_shape[2]//7+0:i*image_shape[2]//7+1+0]   #initial
+                        slice=img[:,:,i*(image_shape[2]-104)//20+52:i*(image_shape[2]-104)//20+52+1]
                         slice=slice.permute(2,0,1)
                         #slice=slice.resize_(1,224,224)
                     #slice=MyDataSet.change(slice)
                     result=torch.cat((result, slice), 0)
+                    #print(result.size())
             result=torch.unsqueeze(result, 0)
+            #print(result.shape)
+            #print(total_result.shape)
             total_result=torch.cat((total_result,result),0)
         image=total_result
         return image
@@ -106,6 +137,7 @@ class MRIDataGenerator(Dataset):
         if self.split == 'train':
             if not self.returnSubjectID:  # training tricks such as balance the two labels and augmentation will not happen once subject ID is required
                 images, labels = self._load_batch_image_train(idx)
+                #print(labels)
                 if self.augmented:
                     if self.augmented_fancy:
                         images = self.dataAugmentation.augmentData_batch_withLabel(images, labels)
@@ -232,7 +264,7 @@ class MRIDataGenerator(Dataset):
             else:
                 self.batch_size_CN = int(self.batch_size * 0.5)
                 self.batch_size_AD = int(self.batch_size * 0.25)
-                self.batch_size_MCI = int(self.batch_size * 0.25)
+                self.batch_size_MCI = self.batch_size-self.batch_size_AD-self.batch_size_CN
         else:
             self.batch_size_CN = int(self.batch_size * 0.5)
             self.batch_size_AD = int(self.batch_size * 0.5)
@@ -244,6 +276,8 @@ class MRIDataGenerator(Dataset):
         return l
 
     def _load_batch_image_train(self, idx):
+        #print("this is idx",idx)
+        #print(self.batch_size)
         idxlist_CN = [*range(idx * self.batch_size_CN, (idx + 1) * self.batch_size_CN)]
         idxlist_AD = [*range(idx * self.batch_size_AD, (idx + 1) * self.batch_size_AD)]
 
@@ -252,10 +286,41 @@ class MRIDataGenerator(Dataset):
 
         images = np.zeros((self.batch_size, *self.dim, self.n_channels))
         labels = np.zeros((self.batch_size, self.n_classes))
+        '''executor = ThreadPoolExecutor(max_workers=56)
+        filePaths_CN_list=[]
+        for i in range(self.batch_size_CN):
+            filePaths_CN_list.append(self.filePaths_CN[idxlist_CN[i]])
+        filePaths_AD_list=[]
+        for i in range(self.batch_size_AD):
+            filePaths_AD_list.append(self.filePaths_AD[idxlist_AD[i]])
+        #print(self.batch_size_CN)
+        #print(idxlist_CN[0:self.batch_size_CN])
+        #print(self.filePaths_CN[idxlist_CN[5]])
+        #result1=executor.map(self.filePaths_CN,idxlist_CN)
+        #print(result1[0])
+        results1 = executor.map(self._load_one_image, filePaths_CN_list)
+        results2 = executor.map(self._load_one_image, filePaths_AD_list)
+        executor.shutdown()
+        for i,result in enumerate(results1):
+            images[i, :, :, :, 0] = result
+            labels[i, 0] = 1
 
+        for i,result in enumerate(results2):
+            images[i, :, :, :, 0] = result
+            labels[i, 0] = 1'''
+        #print("This is labels",labels)
+        '''for i in range(self.batch_size_CN):
+            images[i, :, :, :, 0] = results1[i]
+            labels[i, 0] = 1
+
+        for i in range(self.batch_size_AD):
+            images[i + self.batch_size_CN, :, :, :, 0] = resutls2[i]
+            labels[i + self.batch_size_CN, 1] = 1'''
         for i in range(self.batch_size_CN):
             images[i, :, :, :, 0] = self._load_one_image(self.filePaths_CN[idxlist_CN[i]])
             labels[i, 0] = 1
+            #print(self.filePaths_CN[idxlist_CN[i]])
+            #print(labels)
 
         for i in range(self.batch_size_AD):
             images[i + self.batch_size_CN, :, :, :, 0] = self._load_one_image(self.filePaths_AD[idxlist_AD[i]])
@@ -267,7 +332,7 @@ class MRIDataGenerator(Dataset):
 
             for i in range(self.batch_size_MCI):
                 images[i + self.batch_size_CN + self.batch_size_AD, :, :, :, 0] = self._load_one_image(
-                    self.filePaths_AD[idxlist_MCI[i]])
+                    self.filePaths_MCI[idxlist_MCI[i]])
 
                 if self.MCI_included_as_soft_label:
                     t = np.random.random()
